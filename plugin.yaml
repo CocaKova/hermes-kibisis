@@ -4,5 +4,5 @@ description: "Puts external content that reaches the model through a side door (
 author: "CocaKova"
 homepage: https://github.com/CocaKova/hermes-kibisis
 license: MIT
-hooks:
+provides_hooks:
   - transform_tool_result
