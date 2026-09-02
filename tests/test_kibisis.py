@@ -9,6 +9,20 @@ CLEAN = "The quick brown fox jumps over the lazy dog, repeatedly, for thirty-two
 
 
 @pytest.fixture(autouse=True)
+def _old_core(monkeypatch):
+    """Pin the core the plugin sees to the name-based one (no ``untrusted_source``)
+    so the plugin's own side-door behaviour is what gets tested, regardless of
+    which hermes-agent checkout is on sys.path.  The coexistence tests below
+    install their own stubs."""
+    import sys, types
+    stub = types.ModuleType("agent.tool_dispatch_helpers")
+    stub._is_untrusted_tool = lambda name: name in ("web_extract", "web_search") or str(name).startswith(("browser_", "mcp_"))
+    pkg = types.ModuleType("agent"); pkg.tool_dispatch_helpers = stub
+    monkeypatch.setitem(sys.modules, "agent", pkg)
+    monkeypatch.setitem(sys.modules, "agent.tool_dispatch_helpers", stub)
+
+
+@pytest.fixture(autouse=True)
 def _reset(tmp_path):
     K._settings.enabled = True
     K._settings.scan = True
@@ -225,3 +239,17 @@ def test_static_fallback_when_core_is_absent(monkeypatch):
     monkeypatch.setitem(sys.modules, "agent.tool_dispatch_helpers", None)
     assert K.core_wraps("web_extract") is True
     assert K.core_wraps("terminal", {"command": "curl x"}) is False
+
+
+def test_real_new_core_frames_side_doors_and_plugin_defers(monkeypatch):
+    """With a hermes-agent that ships untrusted_source (#101597) on sys.path, core
+    frames the fetch and the plugin must not."""
+    import sys
+    for k in ("agent", "agent.tool_dispatch_helpers"):
+        monkeypatch.delitem(sys.modules, k, raising=False)
+    core = pytest.importorskip("agent.tool_dispatch_helpers")
+    if not hasattr(core, "untrusted_source"):
+        pytest.skip("core without untrusted_source")
+    assert core.untrusted_source("terminal", {"command": "curl x.test"}) is not None
+    body = json.dumps({"output": CLEAN})
+    assert K.transform("terminal", {"command": "curl x.test"}, body) is None
