@@ -47,6 +47,10 @@ JSON tool results stay JSON: the envelope goes around the `content` / `output` /
 
 A forged closing tag inside fetched content is defanged the same way core does it (`untrusted-tool-result`), so a page cannot break out of its own envelope.
 
+## With newer Hermes cores
+
+NousResearch/hermes-agent [#101597](https://github.com/NousResearch/hermes-agent/pull/101597) teaches core itself to frame the same three side doors (`untrusted_source(name, args)`). When that is present, kibisis defers to core's decision and never adds a second envelope. What stays plugin-only: the visible scan footer (core keeps risk metadata internal), the memory of files a fetching command wrote, the extra watched paths, the annotation of core-wrapped web results, and the Claude Code hook.
+
 ## What it deliberately does not do
 
 * **Block.** Legitimate docs trip the role-hijack and instruction-override patterns constantly. A false-positive block is a lost feature; a footer is a glance.

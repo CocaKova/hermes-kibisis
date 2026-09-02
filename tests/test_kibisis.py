@@ -198,3 +198,30 @@ def test_with_hermes_uses_the_shared_library():
     # Same scan core runs on web results: broader than the fallback set.
     assert "identity_override" in K.scan(IDENTITY_OVERRIDE)
     assert "prompt_injection" in K.scan(INJECT)
+
+
+# ── coexistence with a core that frames side doors itself ─────────────────────
+
+def test_defers_to_core_untrusted_source_when_present(monkeypatch):
+    import sys, types
+    fake = types.ModuleType("agent.tool_dispatch_helpers")
+    fake.untrusted_source = lambda name, args=None: (
+        "terminal:remote-fetch" if name == "terminal" and "curl" in str((args or {}).get("command", "")) else None
+    )
+    pkg = types.ModuleType("agent"); pkg.tool_dispatch_helpers = fake
+    monkeypatch.setitem(sys.modules, "agent", pkg)
+    monkeypatch.setitem(sys.modules, "agent.tool_dispatch_helpers", fake)
+    body = json.dumps({"output": INJECT})
+    out = K.transform("terminal", {"command": "curl x.test"}, body)
+    assert out.startswith(body)                      # core's envelope will come later in the pipeline
+    assert "<untrusted_tool_result" not in out        # never a second one from us
+    assert "[kibisis] content scan flagged" in out    # the visible flag still rides along
+    assert K.transform("terminal", {"command": "curl x.test"}, json.dumps({"output": CLEAN})) is None
+
+
+def test_static_fallback_when_core_is_absent(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "agent", None)
+    monkeypatch.setitem(sys.modules, "agent.tool_dispatch_helpers", None)
+    assert K.core_wraps("web_extract") is True
+    assert K.core_wraps("terminal", {"command": "curl x"}) is False

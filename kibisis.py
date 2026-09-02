@@ -217,16 +217,35 @@ def note_fetched_paths(command: str) -> List[Path]:
     return found
 
 
-def core_wraps(tool_name: str) -> bool:
-    """True when Hermes core already envelopes this tool's output."""
-    try:
-        from agent.tool_dispatch_helpers import _is_untrusted_tool  # type: ignore
+def core_wraps(tool_name: str, args: Any = None) -> bool:
+    """True when Hermes core already envelopes this call's output.
 
-        return bool(_is_untrusted_tool(tool_name))
+    Newer cores export ``untrusted_source(name, args)`` (NousResearch/hermes-agent
+    #101597), which also frames the side doors this plugin covers; when it is
+    present, core's decision wins and the plugin only annotates.  Older cores
+    expose the name-based ``_is_untrusted_tool``; without either, the static
+    list mirrors core's defaults.
+    """
+    try:
+        from agent import tool_dispatch_helpers as _core  # type: ignore
     except Exception:  # noqa: BLE001
-        if tool_name in _CORE_NAMES:
-            return True
-        return any(tool_name.startswith(p) for p in _CORE_PREFIXES)
+        _core = None
+    if _core is not None:
+        source_fn = getattr(_core, "untrusted_source", None)
+        if callable(source_fn):
+            try:
+                return source_fn(tool_name, args) is not None
+            except Exception:  # noqa: BLE001
+                pass
+        name_fn = getattr(_core, "_is_untrusted_tool", None)
+        if callable(name_fn):
+            try:
+                return bool(name_fn(tool_name))
+            except Exception:  # noqa: BLE001
+                pass
+    if tool_name in _CORE_NAMES:
+        return True
+    return any(tool_name.startswith(p) for p in _CORE_PREFIXES)
 
 
 def classify(tool_name: str, args: Any) -> Optional[str]:
@@ -317,9 +336,11 @@ def transform(tool_name: str, args: Any, result: Any) -> Optional[str]:
     source = classify(tool_name, args)
     if not isinstance(result, str) or len(result) < _MIN_CHARS:
         return None
-    if source is None:
-        # Core already framed it; add only the visible flag when the scan fires.
-        if _settings.annotate_core_results and core_wraps(tool_name):
+    if source is None or core_wraps(tool_name, args):
+        # Core already framed it (by name, or — on newer cores — because it
+        # recognised the same side door).  Never add a second envelope; add
+        # only the visible flag when the scan fires.
+        if _settings.annotate_core_results and core_wraps(tool_name, args):
             findings = scan(result)
             if findings:
                 return result + _footer(findings)

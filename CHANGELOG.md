@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 — 2026-09-02
+
+* Defer to core's `untrusted_source(name, args)` when present (hermes-agent #101597) so a core that frames the side doors itself never gets a second envelope from kibisis; the scan footer still rides along.
+
 ## 0.1.0 — 2026-09-02
 
 * First release. Envelopes `read_file` on the web cache (and on files a fetching command wrote), `terminal` remote fetches (`curl`, `wget`, `gh api/issue/pr`, any URL), and `execute_code` that touches the network.
