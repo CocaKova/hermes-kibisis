@@ -811,26 +811,26 @@ def check(req: Request, lock: Optional[Lock] = None, fetch: Optional[FetchFn] = 
     pinned: List[str] = []
     if req.eco == "url":
         for u in req.specs or ["(url)"]:
-            problems.append(f"park    {u}: {req.reason or 'URL install'}; no registry tuple exists")
+            problems.append(f"park              {u}: {req.reason or 'URL install'}; no registry tuple exists")
         return Verdict(False, [], problems, [])
     if req.eco == "bypass":
-        return Verdict(False, [], [f"park    {req.tool}: {req.reason}"], [])
+        return Verdict(False, [], [f"park              {req.tool}: {req.reason}"], [])
     deadline = time.monotonic() + budget
     for i, spec in enumerate(req.specs):
         if time.monotonic() > deadline:
             rest = len(req.specs) - i
-            problems.append(f"park    {rest} more spec(s) not resolved: time budget of {budget:.0f}s spent; "
+            problems.append(f"park              {rest} more spec(s) not resolved: time budget of {budget:.0f}s spent; "
                             "bless from the park record, which resolves them then")
             break
         try:
             t = resolve(req.eco, spec, fetch)
         except Unresolved as exc:
-            problems.append(f"park    {spec}: {exc}")
+            problems.append(f"park              {spec}: {exc}")
             continue
         tuples.append(t)
         st = lock.status(t)
         if st != "ok":
-            problems.append(f"{st:<8}{t.short()}")
+            problems.append(f"{st:<17} {t.short()}")
         pinned.append(_pin(req.eco, spec, t))
     return Verdict(not problems and bool(tuples), tuples, problems, pinned)
 
