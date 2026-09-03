@@ -273,7 +273,7 @@ def test_register_wires_the_hook():
         def get_config(self, key, default=None):
             return default
     pkg.register(Ctx())
-    assert [c[0] for c in calls] == ["transform_tool_result"]
+    assert [c[0] for c in calls] == ["transform_tool_result", "pre_tool_call", "post_approval_response"]
     body = json.dumps({"output": INJECT})
     out = calls[0][1](tool_name="terminal", args={"command": "curl x.test"}, result=body)
     assert "prompt_injection" in json.loads(out)["_kibisis"]["scan"]

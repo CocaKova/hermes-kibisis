@@ -385,6 +385,19 @@ def _footer(findings: List[str]) -> str:
     )
 
 
+def _park_footer(result: str) -> Optional[str]:
+    if "[kibisis:parked" not in result:
+        return None
+    try:
+        try:
+            from . import install_gate as _gate  # type: ignore
+        except ImportError:
+            import install_gate as _gate  # type: ignore
+        return _gate.park_footer(result)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _scan_note(findings: List[str]) -> str:
     return ("flagged: " + ", ".join(findings)) if findings else "clean"
 
@@ -393,6 +406,15 @@ def transform(tool_name: str, args: Any, result: Any) -> Optional[str]:
     """The ``transform_tool_result`` body. Returns a replacement string or None."""
     if not _settings.enabled:
         return None
+    out = _transform_content(tool_name, args, result)
+    if isinstance(result, str) and tool_name in ("terminal", "execute_code"):
+        parked = _park_footer(result)
+        if parked:
+            return (out if out is not None else result) + parked
+    return out
+
+
+def _transform_content(tool_name: str, args: Any, result: Any) -> Optional[str]:
     # Classify before the length guard: a `curl -o file` with empty output still has
     # to register its output path so the later read_file gets the envelope.
     source = classify(tool_name, args)

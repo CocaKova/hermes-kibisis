@@ -2,7 +2,7 @@
 
 **A [Hermes Agent](https://github.com/NousResearch/hermes-agent) plugin that puts external content arriving through a side door into the same untrusted-data envelope Hermes already uses for web results — and leaves a visible flag when the threat scan fires. Framing only: nothing is blocked, no tool loses a byte.**
 
-Stdlib only. Ships with a warn-only companion hook for Claude Code.
+Stdlib only. Ships with a warn-only companion hook for Claude Code and an opt-in install gate.
 
 *The kibisis was the satchel Hermes lent Perseus to carry the Gorgon's head: the head kept every bit of its power, it just could not petrify anyone while it was in the bag. That is the whole design — external content keeps every byte, it just cannot give orders from inside the envelope.*
 
@@ -87,6 +87,37 @@ plugins:
           - ~/inbox
           - /srv/dropbox
 ```
+
+## Install gate (opt-in)
+
+Framing covers the doc. It does nothing about the *target*: an unclaimed package name in an llms.txt, a domain that expired and was re-registered, a typosquat. Official domain plus HTTPS proves transport, not ownership. The install gate puts a lock of `(ecosystem, name, version, publisher, hash)` tuples under the installers the agent can reach. Off by default.
+
+```yaml
+plugins:
+  entries:
+    kibisis:
+      settings:
+        install_gate: gate          # off | tripwire | gate
+        install_lock: ~/.hermes/kibisis/install-lock.json
+        install_registry_timeout: 5
+terminal:
+  shell_init_files:                 # an explicit list replaces the automatic ~/.bashrc sourcing, so keep your rc files in it
+    - ~/.profile
+    - ~/.bashrc
+    - ~/.hermes/kibisis/shims/env.sh
+```
+
+Then `hermes kibisis install-shims` (writes the shims and `env.sh` into `~/.hermes/kibisis/shims/`), `hermes kibisis seed <project-dir>` for every project whose lockfiles you already trust, and restart the gateway.
+
+**`gate` — the floor.** Shims sit in front of `npm`, `npx`, `pnpm`, `yarn`, `pip`, `pip3`, `uv`, `pipx` and `cargo`. An invocation that is not an install (`npm test`, `pip list`, `npx tsc` when `tsc` is in a local `node_modules/.bin`, `cargo install --list`, `npm ci`, `uv sync`, a hash-pinned requirements file) execs the real tool at once. An install resolves each spec against its registry to a tuple and compares with the lock. Every tuple blessed: the real tool runs with the resolution pinned to exactly what was checked. Anything else, including a registry that cannot be reached: a park record is written, one line says so, exit 75, nothing installed. The shim never reads model output, so nothing the model is told can move it. Fail-open here means the *check* dying never costs the agent its shell; it costs it the package.
+
+**`tripwire` — the human path (also on in `gate`).** A `pre_tool_call` hook runs the same check on the command string before it executes and returns `approve` on a miss, so the once / session / always / deny gate Hermes already has fires while you are present. Approve, and the tuples are blessed. Deny, and nothing is recorded. It also escalates what a PATH shim cannot see: a remote script piped into a shell, `python -m pip`, an installer invoked by path, `env -i` or a PATH replaced outright, and any tool call that edits the gate's own files. Lookups are budgeted at 12 s, because core fails `pre_tool_call` closed at 30 s.
+
+**Blessing.** In chat: `/kibisis parked`, `/kibisis bless <id>`, `/kibisis drop <id>`. On the command line: `hermes kibisis …`. A URL install is blessed by the SHA-256 of the fetched body, so the same script stays silent and a changed one parks again. PyPI has no strong publisher field; its tuple is name, version, and a hash over the release's file digests, and that is written down here rather than pretended otherwise.
+
+**What it does not do.** It cannot tell you a publisher is honest; it tells you the publisher and hash today match what a human blessed earlier, so the first bless is a human decision with the tuple in front of them. It does not cover another terminal backend, an SSH host, or a shell that skips the init file. It is not a network policy.
+
+Measured on 30 days of one gateway's terminal history before building it: 2,637 commands, 8 would have escalated, all of them installs the owner would want to see.
 
 ## Claude Code companion hook
 
