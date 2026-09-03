@@ -68,10 +68,23 @@ _FETCH_CODE_RE = re.compile(
     r"\bfetch\(|https?://|playwright|selenium|BeautifulSoup|trafilatura",
     re.IGNORECASE,
 )
-# Where a fetching command wrote its body: -o PATH, --output PATH, --output=PATH,
-# > PATH, >> PATH. Later read_file calls on those paths get the envelope too.
-_OUTPUT_FLAG_RE = re.compile(r"(?:^|\s)(?:-o|--output)(?:=|\s+)(?P<p>\"[^\"]+\"|'[^']+'|\S+)")
-_REDIRECT_RE = re.compile(r">>?\s*(?P<p>\"[^\"]+\"|'[^']+'|[^\s;|&]+)")
+# Where a fetching command wrote its body. Later read_file calls on those paths get
+# the envelope too. Covered shapes:
+#   -o PATH / -O PATH / --output PATH / --output=PATH / --output-document PATH
+#   bundled short flags: -qO PATH, -sSLo PATH   (`-O-` / `-o -` mean stdout: skipped)
+#   > PATH, >> PATH, | tee PATH, | tee -a PATH
+#   curl -O / --remote-name and bare wget: the URL's basename in the working directory
+_PATH_TOKEN = r"(?P<p>\"[^\"]+\"|'[^']+'|[^\s;|&]+)"
+_OUTPUT_FLAG_RE = re.compile(
+    r"(?:^|\s)(?:-[A-Za-z]*[oO]|--output(?:-document)?)(?:=|\s+)" + _PATH_TOKEN
+)
+_REDIRECT_RE = re.compile(r">>?\s*" + _PATH_TOKEN)
+_TEE_RE = re.compile(r"\btee\s+(?:-[a-zA-Z]+\s+)*" + _PATH_TOKEN)
+_URL_RE = re.compile(r"https?://[^\s\"'<>;|&]+", re.IGNORECASE)
+# `curl -O` / `--remote-name` and `wget` with no -O write <basename of URL> in cwd.
+_CURL_REMOTE_NAME_RE = re.compile(r"(?:^|\s)(?:-[A-Za-z]*O[A-Za-z]*|--remote-name(?:-all)?)(?=\s|$)")
+_WGET_RE = re.compile(r"(?:^|[\s;|&(])wget\b")
+_WGET_TO_STDOUT_RE = re.compile(r"(?:^|\s)(?:-[A-Za-z]*O-|-[A-Za-z]*O\s+-|--output-document[= ]-)(?=\s|$)")
 
 # Minimal fallback when Hermes' shared pattern library is not importable (plain
 # pytest, the Claude Code hook on a machine without Hermes). Core's library is
@@ -197,23 +210,72 @@ class _FetchedPaths:
     def clear(self) -> None:
         self._paths.clear()
 
+    # The Claude Code hook is a fresh process per tool call, so its memory of what a
+    # fetch wrote has to live on disk between the Bash call and the later Read.
+    def load(self, file: Path) -> None:
+        try:
+            data = json.loads(Path(file).read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, str):
+                    self.add(Path(item))
+
+    def save(self, file: Path) -> None:
+        try:
+            file = Path(file)
+            file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = file.with_suffix(file.suffix + ".tmp")
+            tmp.write_text(json.dumps(list(self._paths)), encoding="utf-8")
+            os.replace(tmp, file)
+        except Exception:  # noqa: BLE001
+            logger.debug("kibisis: could not persist fetched paths", exc_info=True)
+
 
 fetched_paths = _FetchedPaths()
 
 
+def _is_stdout_or_junk(raw: str) -> bool:
+    return (
+        not raw or raw == "-" or raw.startswith("&") or raw == "/dev/null"
+        or "://" in raw
+    )
+
+
+def _url_basenames(command: str) -> List[str]:
+    names: List[str] = []
+    for url in _URL_RE.findall(command):
+        tail = url.split("?", 1)[0].split("#", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+        if tail and "://" not in tail:
+            names.append(tail)
+    return names
+
+
 def note_fetched_paths(command: str) -> List[Path]:
     """Record output paths of a fetching command. Returns what was recorded."""
-    found: List[Path] = []
-    for regex in (_OUTPUT_FLAG_RE, _REDIRECT_RE):
+    candidates: List[str] = []
+    for regex in (_OUTPUT_FLAG_RE, _REDIRECT_RE, _TEE_RE):
         for m in regex.finditer(command):
-            raw = m.group("p").strip("\"'")
-            if not raw or raw.startswith("&") or raw == "/dev/null":
-                continue
-            resolved = _resolve(raw)
-            if resolved is None:
-                continue
-            fetched_paths.add(resolved)
-            found.append(resolved)
+            candidates.append(m.group("p").strip("\"'"))
+    # Segment-wise so a pipeline like `curl -O a | wget b` is judged per command.
+    for segment in re.split(r"\s*(?:\|\||&&|[|;])\s*", command):
+        head = segment.strip().split(" ", 1)[0] if segment.strip() else ""
+        # `-O` on curl means remote-name; on wget it takes a path (handled above).
+        if head.endswith("curl") and _CURL_REMOTE_NAME_RE.search(segment):
+            candidates.extend(_url_basenames(segment))
+        elif _WGET_RE.search(segment) and not _OUTPUT_FLAG_RE.search(segment) \
+                and not _WGET_TO_STDOUT_RE.search(segment):
+            candidates.extend(_url_basenames(segment))
+    found: List[Path] = []
+    for raw in candidates:
+        if _is_stdout_or_junk(raw):
+            continue
+        resolved = _resolve(raw)
+        if resolved is None:
+            continue
+        fetched_paths.add(resolved)
+        found.append(resolved)
     return found
 
 

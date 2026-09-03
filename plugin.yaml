@@ -1,5 +1,5 @@
 name: kibisis
-version: "0.1.1"
+version: "0.1.2"
 description: "Puts external content that reaches the model through a side door (read_file on the web cache, curl/wget/gh output in the terminal, execute_code that hits the network) into the same untrusted-data envelope Hermes core already uses for web/browser/MCP results, and leaves a visible footer when core's own threat-pattern scan fires. Framing only: nothing is blocked, no tool loses a byte of output."
 author: "CocaKova"
 homepage: https://github.com/CocaKova/hermes-kibisis

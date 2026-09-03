@@ -37,7 +37,7 @@ An `llms.txt`, a README, a GitHub issue body, a support-ticket export: the same 
 
 One hook, `transform_tool_result`:
 
-* **`read_file`** — if the path is under the web cache, `~/Downloads`, a configured extra path, or a file that an earlier fetching command wrote to (`curl -o`, `wget -O`, `> file`), the content is enveloped.
+* **`read_file`** — if the path is under the web cache, `~/Downloads`, a configured extra path, or a file that an earlier fetching command wrote to (`curl -o`, `wget -O`, `-qO`, `> file`, `| tee file`, or the basename `curl -O` / bare `wget` drop in the working directory), the content is enveloped.
 * **`terminal`** — if the command fetches remote content (`curl`, `wget`, `xh`, `httpie`, `aria2c`, `lynx`, `w3m`, `gh api|issue|pr|release|gist`, `glab`, `Invoke-WebRequest`, or any `http(s)://`), the output is enveloped. Output paths from that command are remembered for later reads.
 * **`execute_code`** — if the code talks to the network, the output is enveloped.
 * **Everything the envelope touches is scanned** with Hermes' own `tools/threat_patterns` (the same scan core runs on web results). A hit becomes a visible footer — in the CLI, in Keryx, in the dashboard, wherever tool results render — and a `_kibisis.scan` field on JSON results. Nothing is removed or blocked.
@@ -90,7 +90,7 @@ plugins:
 
 ## Claude Code companion hook
 
-`claude-code/kibisis_hook.py` is a `PostToolUse` hook that applies the same idea to Claude Code: it scans `WebFetch` / `WebSearch` results, Bash commands that fetch a URL, and `Read`s of fetched files, and hands the model a one-line note as `additionalContext` when something matches (or, for Bash/Read side doors, a one-line "this is external data" reminder). It never blocks and always exits 0.
+`claude-code/kibisis_hook.py` is a `PostToolUse` hook that applies the same idea to Claude Code: it scans `WebFetch` / `WebSearch` results, Bash commands that fetch a URL, and `Read`s of fetched files, and hands the model a one-line note as `additionalContext` when something matches (or, for Bash/Read side doors, a one-line "this is external data" reminder). It never blocks and always exits 0. Because every hook call is a fresh process, the files a Bash fetch wrote are remembered in `$XDG_STATE_HOME/kibisis/fetched_paths.json` (default `~/.local/state/...`; override with `KIBISIS_STATE_DIR`) so the later `Read` still gets the note.
 
 `~/.claude/settings.json`:
 

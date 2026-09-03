@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -93,6 +94,77 @@ def test_redirect_target_is_remembered(tmp_path):
     target = tmp_path / "page.html"
     K.classify("terminal", {"command": f"wget -qO- https://x.test > {target}"})
     assert target.resolve() in K.fetched_paths
+
+
+@pytest.mark.parametrize("shape", [
+    "wget -O {t} https://x.test/page",
+    "wget -qO {t} https://x.test/page",
+    "wget --output-document={t} https://x.test/page",
+    "curl -sSLo {t} https://x.test/page",
+    "curl -s https://x.test/page --output {t}",
+    "curl -s https://x.test/page | tee {t}",
+    "curl -s https://x.test/page | tee -a {t} > /dev/null",
+])
+def test_output_flag_shapes_are_remembered(tmp_path, shape):
+    target = tmp_path / "body.txt"
+    K.classify("terminal", {"command": shape.format(t=target)})
+    assert target.resolve() in K.fetched_paths
+
+
+@pytest.mark.parametrize("shape", [
+    "wget -O- https://x.test/page",
+    "wget -qO- https://x.test/page",
+    "wget -O - https://x.test/page",
+    "curl -o - https://x.test/page",
+    "curl -s https://x.test/page > /dev/null",
+])
+def test_stdout_forms_record_nothing(shape):
+    K.classify("terminal", {"command": shape})
+    assert not K.fetched_paths._paths
+
+
+def test_curl_remote_name_and_bare_wget_record_the_url_basename(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    K.classify("terminal", {"command": "curl -sO https://x.test/dist/tool-1.2.tgz?dl=1"})
+    assert (tmp_path / "tool-1.2.tgz").resolve() in K.fetched_paths
+    K.classify("terminal", {"command": "wget https://x.test/docs/llms.txt"})
+    assert (tmp_path / "llms.txt").resolve() in K.fetched_paths
+    # a URL itself is never a path, and curl -o on the same line wins over -O semantics
+    assert not any("x.test" in p for p in K.fetched_paths._paths)
+
+
+def test_fetched_paths_round_trip_through_a_file(tmp_path):
+    state = tmp_path / "state" / "fetched.json"
+    K.fetched_paths.add(tmp_path / "a")
+    K.fetched_paths.save(state)
+    K.fetched_paths.clear()
+    K.fetched_paths.load(state)
+    assert (tmp_path / "a").resolve() in K.fetched_paths
+    K.fetched_paths.load(tmp_path / "missing.json")  # silent no-op
+
+
+def _run_hook(payload, state_dir):
+    import subprocess, sys as _sys
+    hook = Path(__file__).resolve().parent.parent / "claude-code" / "kibisis_hook.py"
+    env = dict(os.environ, KIBISIS_STATE_DIR=str(state_dir), HERMES_AGENT_DIR="/nonexistent")
+    proc = subprocess.run([_sys.executable, str(hook)], input=json.dumps(payload),
+                          capture_output=True, text=True, env=env, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout) if proc.stdout.strip() else None
+
+
+def test_claude_hook_remembers_a_fetch_across_processes(tmp_path):
+    target = tmp_path / "fetched.html"
+    state = tmp_path / "state"
+    bash = _run_hook({"tool_name": "Bash", "tool_input": {"command": f"wget -qO {target} https://x.test/p"},
+                      "tool_response": {"stdout": CLEAN}}, state)
+    assert "external content" in bash["hookSpecificOutput"]["additionalContext"]
+    read = _run_hook({"tool_name": "Read", "tool_input": {"file_path": str(target)},
+                      "tool_response": CLEAN}, state)
+    assert read is not None and "Read (fetched file)" in read["hookSpecificOutput"]["additionalContext"]
+    other = _run_hook({"tool_name": "Read", "tool_input": {"file_path": str(tmp_path / "notes.md")},
+                       "tool_response": CLEAN}, state)
+    assert other is None
 
 
 def test_execute_code_with_network_is_enveloped():

@@ -32,6 +32,13 @@ for candidate in (os.environ.get("HERMES_AGENT_DIR"), str(Path.home() / ".hermes
 import kibisis as K  # noqa: E402
 
 _MAX_SCAN = 400_000
+# Each hook call is a fresh process: the paths a Bash fetch wrote are kept here so
+# the later Read of that file still gets the note. Override with KIBISIS_STATE_DIR.
+_STATE_FILE = Path(
+    os.environ.get("KIBISIS_STATE_DIR")
+    or os.environ.get("XDG_STATE_HOME")
+    or (Path.home() / ".local" / "state")
+) / "kibisis" / "fetched_paths.json"
 
 
 def _text(value) -> str:
@@ -49,12 +56,19 @@ def _source(tool: str, tool_input: dict) -> str | None:
     if tool == "Bash":
         cmd = str(tool_input.get("command") or "")
         if K._FETCH_COMMAND_RE.search(cmd):
-            K.note_fetched_paths(cmd)
+            K.fetched_paths.load(_STATE_FILE)
+            if K.note_fetched_paths(cmd):
+                K.fetched_paths.save(_STATE_FILE)
             return "Bash (remote fetch)"
         return None
     if tool == "Read":
         path = K._resolve(str(tool_input.get("file_path") or ""))
-        if path is not None and K._under(path, K.watched_dirs()):
+        if path is None:
+            return None
+        if K._under(path, K.watched_dirs()):
+            return "Read (fetched file)"
+        K.fetched_paths.load(_STATE_FILE)
+        if path in K.fetched_paths:
             return "Read (fetched file)"
         return None
     return None

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2 — 2026-09-02
+
+* Remember more of the files a fetch writes: `wget -O`, bundled short flags (`-qO`, `-sSLo`), `--output-document`, `| tee`, and the URL basename that `curl -O` / bare `wget` drop in the working directory. Stdout forms (`-O-`, `-o -`) and `/dev/null` are never recorded.
+* Claude Code hook: the `Read` branch now honours the fetched-path memory. Each hook call is a fresh process, so that memory is persisted to `$XDG_STATE_HOME/kibisis/fetched_paths.json` (override with `KIBISIS_STATE_DIR`). Before this the feature was dead in the hook.
+
 ## 0.1.1 — 2026-09-02
 
 * Defer to core's `untrusted_source(name, args)` when present (hermes-agent #101597) so a core that frames the side doors itself never gets a second envelope from kibisis; the scan footer still rides along.
