@@ -280,6 +280,59 @@ def test_seed_reads_lockfiles(tmp_path):
     assert ("npm", "left-pad", "1.3.0") in keys and ("crates", "serde", "1.0.230") in keys
 
 
+UV_LOCK = '''version = 1
+requires-python = ">=3.10"
+
+[[package]]
+name = "requests"
+version = "2.32.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "certifi" },
+]
+sdist = { url = "https://files.pythonhosted.org/r.tar.gz", hash = "sha256:aaaa", size = 1 }
+wheels = [
+    { url = "https://files.pythonhosted.org/r.whl", hash = "sha256:bbbb", size = 2 },
+]
+
+[[package]]
+name = "certifi"
+version = "2024.8.30"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://x/c.tar.gz", hash = "sha256:cccc", size = 3 }
+
+[[package.wheels]]
+url = "https://x/c.whl"
+hash = "sha256:dddd"
+
+[package.metadata]
+requires-dist = []
+'''
+
+
+def test_lock_parser_fallback_matches_tomllib(tmp_path, monkeypatch):
+    with_tomllib = G._lock_packages(UV_LOCK)
+    # force the 3.10 path
+    import builtins
+    real_import = builtins.__import__
+
+    def no_tomllib(name, *a, **k):
+        if name == "tomllib":
+            raise ImportError
+        return real_import(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", no_tomllib)
+    fallback = G._lock_packages(UV_LOCK)
+    names = [(p["name"], p["version"]) for p in fallback]
+    assert names == [("requests", "2.32.3"), ("certifi", "2024.8.30")]
+    assert fallback[1]["sdist"]["hash"] == "sha256:cccc" and fallback[1]["wheels"][0]["hash"] == "sha256:dddd"
+    (tmp_path / "uv.lock").write_text(UV_LOCK)
+    (tmp_path / "Cargo.lock").write_text('[[package]]\nname = "serde"\nversion = "1.0.230"\nchecksum = "cc"\n')
+    seeded = {(t.eco, t.name, t.version) for t in G.seed(tmp_path)}
+    assert ("pypi", "certifi", "2024.8.30") in seeded and ("crates", "serde", "1.0.230") in seeded
+    if with_tomllib and "sdist" in with_tomllib[0]:
+        assert {(p["name"], p["version"]) for p in with_tomllib} == set(names)
+
+
 # ── the hook (L1) ────────────────────────────────────────────────────────────
 
 def test_hook_off_is_silent(tmp_path, monkeypatch):

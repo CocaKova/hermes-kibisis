@@ -874,11 +874,59 @@ def seed(project: Path) -> List[Tuple5]:
     return found
 
 
+_TOML_KV = re.compile(r'^\s*([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*(?:#.*)?$')
+_TOML_INLINE_HASH = re.compile(r'hash\s*=\s*"([^"]+)"')
+
+
+def _lock_packages(text: str) -> List[Dict[str, Any]]:
+    """The ``[[package]]`` tables of a uv.lock / Cargo.lock: name, version, checksum,
+    sdist hash, wheel hashes. ``tomllib`` when it exists (3.11+), else a parser for
+    exactly this subset so seeding works on 3.10 too."""
+    try:
+        import tomllib  # type: ignore
+        doc = tomllib.loads(text)
+        return [pkg for pkg in (doc.get("package") or []) if isinstance(pkg, dict)]
+    except ImportError:
+        pass
+    except Exception:  # noqa: BLE001
+        return []
+    pkgs: List[Dict[str, Any]] = []
+    cur: Optional[Dict[str, Any]] = None
+    target: Optional[Dict[str, Any]] = None  # where plain key = "value" lines land
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line == "[[package]]":
+            cur = {"wheels": []}
+            pkgs.append(cur)
+            target = cur
+            continue
+        if line == "[[package.wheels]]" and cur is not None:
+            wheel: Dict[str, Any] = {}
+            cur["wheels"].append(wheel)
+            target = wheel
+            continue
+        if line.startswith("["):
+            target = None  # some other table until the next package/wheel header
+            continue
+        if target is None:
+            continue
+        if line.startswith("sdist") and cur is not None:
+            m = _TOML_INLINE_HASH.search(line)
+            if m:
+                cur["sdist"] = {"hash": m.group(1)}
+            continue
+        m = _TOML_KV.match(line)
+        if m:
+            target[m.group(1)] = m.group(2)
+    return pkgs
+
+
 def _seed_uv_lock(p: Path) -> List[Tuple5]:
     out: List[Tuple5] = []
     try:
-        import tomllib  # py3.11+
-        doc = tomllib.loads(p.read_text(encoding="utf-8"))
+        doc = {"package": _lock_packages(p.read_text(encoding="utf-8"))}
     except Exception:  # noqa: BLE001
         return out
     for pkg in doc.get("package") or []:
@@ -897,8 +945,7 @@ def _seed_uv_lock(p: Path) -> List[Tuple5]:
 def _seed_cargo_lock(p: Path) -> List[Tuple5]:
     out: List[Tuple5] = []
     try:
-        import tomllib
-        doc = tomllib.loads(p.read_text(encoding="utf-8"))
+        doc = {"package": _lock_packages(p.read_text(encoding="utf-8"))}
     except Exception:  # noqa: BLE001
         return out
     for pkg in doc.get("package") or []:
